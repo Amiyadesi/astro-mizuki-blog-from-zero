@@ -1,0 +1,60 @@
+name: Deploy Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_PROJECT_NAME: ${{ secrets.CLOUDFLARE_PROJECT_NAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check Cloudflare secrets
+        shell: bash
+        run: |
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN CLOUDFLARE_PROJECT_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing GitHub Actions secret: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Build blog
+        working-directory: blog
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Deploy
+        working-directory: blog
+        run: >
+          npx --yes wrangler@latest pages deploy dist
+          --project-name "${CLOUDFLARE_PROJECT_NAME}"
+          --branch main
+          --commit-message "Deploy blog from GitHub Actions"

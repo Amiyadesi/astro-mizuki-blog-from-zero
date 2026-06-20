@@ -1,0 +1,12 @@
+{
+  "name": "astro-mizuki-blog-from-zero",
+  "version": "0.1.0",
+  "private": false,
+  "scripts": {
+    "test": "node --test articles/.obsidian/plugins/post-history-tracker/tests.mjs",
+    "sync-content": "node blog/scripts/sync-content.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

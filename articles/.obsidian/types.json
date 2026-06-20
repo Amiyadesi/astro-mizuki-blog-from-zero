@@ -1,0 +1,19 @@
+{
+  "types": {
+    "aliases": "aliases",
+    "cssclasses": "multitext",
+    "tags": "tags",
+    "title": "text",
+    "published": "date",
+    "created": "date",
+    "description": "text",
+    "image": "text",
+    "category": "text",
+    "draft": "checkbox",
+    "alias": "text",
+    "permalink": "text",
+    "updated": "date",
+    "lastEdited": "date",
+    "updateCount": "number"
+  }
+}

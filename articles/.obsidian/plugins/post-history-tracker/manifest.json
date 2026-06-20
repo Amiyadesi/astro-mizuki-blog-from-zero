@@ -1,0 +1,10 @@
+{
+  "id": "post-history-tracker",
+  "name": "Post History Tracker",
+  "version": "1.0.2",
+  "main": "main.js",
+  "minAppVersion": "1.6.0",
+  "description": "Updates post history only during one-click publish and deploys the blog from Obsidian.",
+  "author": "Amiya",
+  "isDesktopOnly": true
+}

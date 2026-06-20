@@ -1,0 +1,10 @@
+{
+  "homeText": {
+    "title": "My Mizuki Blog",
+    "subtitle": "Written in Obsidian"
+  },
+  "carousel": {
+    "enable": false,
+    "interval": 3
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "links": [
+    { "preset": "Home" },
+    { "preset": "Archive" },
+    { "preset": "About" }
+  ]
+}
