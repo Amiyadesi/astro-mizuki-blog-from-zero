@@ -56,7 +56,7 @@ function buildLocalPreviewCommand(vaultBasePath, options = {}) {
   );
   const args = [...baseCommand.args];
 
-  if (options.skipInstall !== false) {
+  if (options.skipInstall === true) {
     args.push("-SkipInstall");
   }
 

@@ -108,10 +108,14 @@ Write-Host "1. Sync articles -> Mizuki content" -ForegroundColor Green
 Invoke-Checked -Command "node" -Arguments @($SyncScript)
 
 Write-Host "2. Install blog dependencies when needed" -ForegroundColor Green
-if (-not $SkipInstall -or -not (Test-Path -LiteralPath (Join-Path $BlogDir "node_modules"))) {
+$NodeModulesDir = Join-Path $BlogDir "node_modules"
+if (-not (Test-Path -LiteralPath $NodeModulesDir)) {
+  Write-Host "> blog/node_modules missing; installing dependencies"
+  Invoke-Checked -Command "pnpm" -Arguments @("install", "--frozen-lockfile") -WorkingDirectory $BlogDir
+} elseif (-not $SkipInstall) {
   Invoke-Checked -Command "pnpm" -Arguments @("install", "--frozen-lockfile") -WorkingDirectory $BlogDir
 } else {
-  Write-Host "> skipped pnpm install"
+  Write-Host "> skipped pnpm install because blog/node_modules exists"
 }
 
 Write-Host "3. Build Mizuki blog" -ForegroundColor Green

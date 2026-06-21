@@ -288,7 +288,7 @@ function createPublishCore() {
     );
     const args = [...baseCommand.args];
 
-    if (options.skipInstall !== false) {
+    if (options.skipInstall === true) {
       args.push("-SkipInstall");
     }
 
@@ -640,7 +640,7 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
       ].join("\n"),
     );
 
-    new Notice("开始本地预览：会先同步内容、构建博客，再启动预览服务。", 7000);
+    new Notice("开始本地预览：会先同步内容，缺依赖会自动安装，然后构建并启动预览服务。", 7000);
 
     try {
       const child = spawn(previewCommand.command, previewCommand.args, {

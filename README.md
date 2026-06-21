@@ -46,11 +46,10 @@ content under `blog/src/content/posts/` should not be edited by hand.
 2. Keep this repository's `articles/`, `blog/scripts/sync-content.js`, and
    `scripts/deploy-blog-from-obsidian.ps1`.
 3. Merge `blog/package-scripts.example.json` into `blog/package.json`.
-4. Install your Mizuki dependencies inside `blog/`.
-5. Open `articles/` as an Obsidian vault.
-6. Enable the local community plugin `Post History Tracker` if Obsidian asks.
-7. Write posts in `articles/posts/`.
-8. Run:
+4. Open `articles/` as an Obsidian vault.
+5. Enable the local community plugin `Post History Tracker` if Obsidian asks.
+6. Write posts in `articles/posts/`.
+7. Run:
 
 ```powershell
 .\scripts\deploy-blog-from-obsidian.ps1 -SkipInstall -CommitChanges -PushChanges
@@ -71,6 +70,10 @@ http://127.0.0.1:4173/
 The same button becomes `停止博客预览`; click it again to stop the preview
 service.
 
+If `blog/node_modules` is missing, the first local preview installs the blog
+dependencies before building. Later previews are faster because dependencies are
+already present.
+
 ## Cloudflare Pages
 
 The included workflow is optional. If you prefer the Cloudflare Dashboard Git
@@ -89,6 +92,11 @@ CLOUDFLARE_ACCOUNT_ID
 CLOUDFLARE_API_TOKEN
 CLOUDFLARE_PROJECT_NAME
 ```
+
+`CLOUDFLARE_API_TOKEN` should be a Cloudflare API token with Account ->
+Cloudflare Pages -> Edit access. The workflow checks whether
+`CLOUDFLARE_PROJECT_NAME` exists and creates that Pages project before the first
+deployment if needed.
 
 ## Plugin Behavior
 

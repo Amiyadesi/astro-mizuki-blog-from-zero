@@ -45,6 +45,53 @@ jobs:
           corepack enable
           corepack prepare pnpm@latest --activate
 
+      - name: Ensure Cloudflare Pages project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          api_base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects"
+          project_url="${api_base}/${CLOUDFLARE_PROJECT_NAME}"
+          response_file="$(mktemp)"
+
+          status="$(
+            curl --silent --show-error --output "${response_file}" --write-out "%{http_code}" \
+              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              "${project_url}"
+          )"
+
+          if [[ "${status}" == "200" ]]; then
+            echo "Cloudflare Pages project already exists: ${CLOUDFLARE_PROJECT_NAME}"
+            exit 0
+          fi
+
+          if [[ "${status}" != "404" ]]; then
+            cat "${response_file}"
+            echo "::error::Failed to check Cloudflare Pages project. HTTP status: ${status}"
+            exit 1
+          fi
+
+          request_body="$(mktemp)"
+          node -e 'process.stdout.write(JSON.stringify({ name: process.env.CLOUDFLARE_PROJECT_NAME, production_branch: "main" }))' > "${request_body}"
+
+          status="$(
+            curl --silent --show-error --output "${response_file}" --write-out "%{http_code}" \
+              --request POST \
+              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data @"${request_body}" \
+              "${api_base}"
+          )"
+
+          if [[ "${status}" == "200" || "${status}" == "201" ]]; then
+            echo "Created Cloudflare Pages project: ${CLOUDFLARE_PROJECT_NAME}"
+            exit 0
+          fi
+
+          cat "${response_file}"
+          echo "::error::Failed to create Cloudflare Pages project. HTTP status: ${status}"
+          exit 1
+
       - name: Build blog
         working-directory: blog
         run: |

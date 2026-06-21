@@ -227,8 +227,17 @@ describe("publish command", () => {
       command.args[4],
       `${repoRoot.replace(/\\/g, "/")}/scripts/local-preview.ps1`,
     );
-    assert.equal(command.args[5], "-SkipInstall");
+    assert.equal(command.args.includes("-SkipInstall"), false);
     assert.equal(command.scriptPath, command.args[4]);
+  });
+
+  it("can build a local preview command with dependency install skipped explicitly", () => {
+    const vaultBasePath = path.resolve("articles");
+    const command = buildLocalPreviewCommand(vaultBasePath, {
+      skipInstall: true,
+    });
+
+    assert.equal(command.args[5], "-SkipInstall");
   });
 
   it("builds a local preview stop command rooted at the repo scripts directory", () => {
@@ -377,6 +386,7 @@ describe("obsidian plugin registration", () => {
     assert.equal(mainSource.includes("toggleLocalPreview"), true);
     assert.equal(mainSource.includes("stopLocalPreview"), true);
     assert.equal(mainSource.includes("refreshPreviewButtonState"), true);
+    assert.equal(mainSource.includes("缺依赖会自动安装"), true);
     assert.equal(mainSource.includes("openPreviewUrl(previewState.blogUrl)"), true);
     assert.equal(mainSource.includes("shell.openExternal(url)"), true);
   });
