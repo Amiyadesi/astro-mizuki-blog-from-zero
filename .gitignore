@@ -13,6 +13,10 @@ plugin.log
 blog/dist/
 blog/node_modules/
 blog/src/content/posts/
+blog/src/content/spec/
 blog/src/generated/
+blog/src/data/anime.ts
 blog/public/images/posts/
 blog/public/assets/
+.preview-pids.json
+articles/.obsidian/plugins/post-history-tracker/*.log

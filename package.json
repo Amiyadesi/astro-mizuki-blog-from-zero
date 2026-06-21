@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "scripts": {
-    "test": "node --test articles/.obsidian/plugins/post-history-tracker/tests.mjs",
+    "test": "node --test articles/.obsidian/plugins/post-history-tracker/tests.mjs blog/scripts/sync-content.test.mjs",
     "sync-content": "node blog/scripts/sync-content.js"
   },
   "engines": {

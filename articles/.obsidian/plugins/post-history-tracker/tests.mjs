@@ -14,9 +14,13 @@ const {
   updatePostHistoryForCommit,
 } = require("./history-core.js");
 const {
+  buildLocalPreviewCommand,
   buildPublishCommand,
+  buildStopPreviewCommand,
   getPluginDir,
   getPluginLogPath,
+  getPreviewLogPath,
+  getPreviewPidPath,
   getPublishLogPath,
   getRepoRoot,
 } = require("./publish-core.js");
@@ -206,13 +210,60 @@ describe("publish command", () => {
     assert.equal(command.args.includes("-PushChanges"), false);
   });
 
+  it("builds a local preview command rooted at the repo scripts directory", () => {
+    const vaultBasePath = path.resolve("articles");
+    const repoRoot = path.resolve(".");
+    const command = buildLocalPreviewCommand(vaultBasePath);
+
+    assert.equal(command.command, "powershell.exe");
+    assert.equal(command.cwd, repoRoot.replace(/\\/g, "/"));
+    assert.deepEqual(command.args.slice(0, 4), [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+    ]);
+    assert.equal(
+      command.args[4],
+      `${repoRoot.replace(/\\/g, "/")}/scripts/local-preview.ps1`,
+    );
+    assert.equal(command.args[5], "-SkipInstall");
+    assert.equal(command.scriptPath, command.args[4]);
+  });
+
+  it("builds a local preview stop command rooted at the repo scripts directory", () => {
+    const vaultBasePath = path.resolve("articles");
+    const repoRoot = path.resolve(".");
+    const command = buildStopPreviewCommand(vaultBasePath);
+
+    assert.equal(command.command, "powershell.exe");
+    assert.equal(command.cwd, repoRoot.replace(/\\/g, "/"));
+    assert.deepEqual(command.args.slice(0, 4), [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+    ]);
+    assert.equal(
+      command.args[4],
+      `${repoRoot.replace(/\\/g, "/")}/scripts/stop-preview.ps1`,
+    );
+    assert.equal(command.scriptPath, command.args[4]);
+  });
+
   it("keeps publish log inside the local plugin directory", () => {
     const vaultBasePath = path.resolve("articles");
+    const repoRoot = path.resolve(".");
     const pluginDir = `${vaultBasePath.replace(/\\/g, "/")}/.obsidian/plugins/post-history-tracker`;
 
     assert.equal(getPluginDir(vaultBasePath), pluginDir);
     assert.equal(getPluginLogPath(vaultBasePath), `${pluginDir}/plugin.log`);
     assert.equal(getPublishLogPath(vaultBasePath), `${pluginDir}/publish.log`);
+    assert.equal(getPreviewLogPath(vaultBasePath), `${pluginDir}/preview.log`);
+    assert.equal(
+      getPreviewPidPath(vaultBasePath),
+      `${repoRoot.replace(/\\/g, "/")}/.preview-pids.json`,
+    );
   });
 });
 
@@ -309,6 +360,37 @@ describe("obsidian plugin registration", () => {
       Module._load = originalLoad;
       delete require.cache[mainPath];
     }
+  });
+
+  it("registers a local preview entry alongside publish entry", () => {
+    const mainSource = fs.readFileSync(
+      "articles/.obsidian/plugins/post-history-tracker/main.js",
+      "utf8",
+    );
+
+    assert.equal(mainSource.includes("本地预览博客"), true);
+    assert.equal(mainSource.includes("启动博客预览"), true);
+    assert.equal(mainSource.includes("停止博客预览"), true);
+    assert.equal(mainSource.includes("local-preview.ps1"), true);
+    assert.equal(mainSource.includes("stop-preview.ps1"), true);
+    assert.equal(mainSource.includes("preview-blog-locally"), true);
+    assert.equal(mainSource.includes("toggleLocalPreview"), true);
+    assert.equal(mainSource.includes("stopLocalPreview"), true);
+    assert.equal(mainSource.includes("refreshPreviewButtonState"), true);
+    assert.equal(mainSource.includes("openPreviewUrl(previewState.blogUrl)"), true);
+    assert.equal(mainSource.includes("shell.openExternal(url)"), true);
+  });
+
+  it("registers a site config hub command for Obsidian authoring", () => {
+    const mainSource = fs.readFileSync(
+      "articles/.obsidian/plugins/post-history-tracker/main.js",
+      "utf8",
+    );
+
+    assert.equal(mainSource.includes("open-blog-site-config-hub"), true);
+    assert.equal(mainSource.includes("打开博客站点配置入口"), true);
+    assert.equal(mainSource.includes("spec/site-config-hub.md"), true);
+    assert.equal(fs.existsSync("articles/spec/site-config-hub.md"), true);
   });
 });
 

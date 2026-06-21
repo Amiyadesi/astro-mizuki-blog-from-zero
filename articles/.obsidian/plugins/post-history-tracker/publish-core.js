@@ -1,12 +1,7 @@
-function buildPublishCommand(vaultBasePath, options = {}) {
+function buildScriptCommand(vaultBasePath, scriptName, options = {}) {
   const repoRoot = getRepoRoot(vaultBasePath);
-  const scriptPath = joinPath(
-    repoRoot,
-    "scripts",
-    "deploy-blog-from-obsidian.ps1",
-  );
+  const scriptPath = joinPath(repoRoot, "scripts", scriptName);
   const command = options.powershellCommand || "powershell.exe";
-
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -14,6 +9,22 @@ function buildPublishCommand(vaultBasePath, options = {}) {
     "-File",
     scriptPath,
   ];
+
+  return {
+    args,
+    command,
+    cwd: repoRoot,
+    scriptPath,
+  };
+}
+
+function buildPublishCommand(vaultBasePath, options = {}) {
+  const baseCommand = buildScriptCommand(
+    vaultBasePath,
+    "deploy-blog-from-obsidian.ps1",
+    options,
+  );
+  const args = [...baseCommand.args];
 
   if (options.skipInstall !== false) {
     args.push("-SkipInstall");
@@ -32,11 +43,35 @@ function buildPublishCommand(vaultBasePath, options = {}) {
   }
 
   return {
+    ...baseCommand,
     args,
-    command,
-    cwd: repoRoot,
-    scriptPath,
   };
+}
+
+function buildLocalPreviewCommand(vaultBasePath, options = {}) {
+  const baseCommand = buildScriptCommand(
+    vaultBasePath,
+    "local-preview.ps1",
+    options,
+  );
+  const args = [...baseCommand.args];
+
+  if (options.skipInstall !== false) {
+    args.push("-SkipInstall");
+  }
+
+  if (Number.isInteger(options.blogPort)) {
+    args.push("-BlogPort", String(options.blogPort));
+  }
+
+  return {
+    ...baseCommand,
+    args,
+  };
+}
+
+function buildStopPreviewCommand(vaultBasePath, options = {}) {
+  return buildScriptCommand(vaultBasePath, "stop-preview.ps1", options);
 }
 
 function getRepoRoot(vaultBasePath) {
@@ -57,8 +92,16 @@ function getPublishLogPath(vaultBasePath) {
   return joinPath(getPluginDir(vaultBasePath), "publish.log");
 }
 
+function getPreviewLogPath(vaultBasePath) {
+  return joinPath(getPluginDir(vaultBasePath), "preview.log");
+}
+
 function getPluginLogPath(vaultBasePath) {
   return joinPath(getPluginDir(vaultBasePath), "plugin.log");
+}
+
+function getPreviewPidPath(vaultBasePath) {
+  return joinPath(getRepoRoot(vaultBasePath), ".preview-pids.json");
 }
 
 function joinPath(...parts) {
@@ -80,9 +123,13 @@ function normalizeSlashes(value) {
 }
 
 module.exports = {
+  buildLocalPreviewCommand,
   buildPublishCommand,
+  buildStopPreviewCommand,
   getPluginDir,
   getPluginLogPath,
+  getPreviewLogPath,
+  getPreviewPidPath,
   getPublishLogPath,
   getRepoRoot,
   joinPath,

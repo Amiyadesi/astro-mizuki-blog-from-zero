@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const scriptFile = fileURLToPath(import.meta.url);
@@ -14,10 +15,12 @@ const POST_IMAGES_DEST = path.join(IMAGES_DEST, "posts");
 const SITE_CONFIG_SRC = path.join(articlesRoot, "site");
 const SITE_ASSETS_SRC = path.join(articlesRoot, "assets");
 const ANIME_SRC = path.join(articlesRoot, "anime");
+const FRIENDS_SRC = path.join(articlesRoot, "friends");
 const PUBLIC_ASSETS_DEST = path.join(blogRoot, "public", "assets");
 const ANIME_PUBLIC_DEST = path.join(PUBLIC_ASSETS_DEST, "anime");
 const ANIME_DATA_DEST = path.join(blogRoot, "src", "data", "anime.ts");
 const GENERATED_CONFIG_DEST = path.join(blogRoot, "src", "generated", "obsidian-config.ts");
+const GENERATED_FRIENDS_DEST = path.join(blogRoot, "src", "generated", "friends.ts");
 
 const IMAGE_EXTS = new Set([
 	".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".ico", ".bmp",
@@ -36,13 +39,15 @@ if (!fs.existsSync(articlesRoot)) {
 	process.exit(0);
 }
 
+printArticleChangeSummary(collectArticleChangeSummary());
+
 const postIndex = buildPostIndex(POSTS_SRC);
 
 // --- Sync global images ---
 const imagesSrc = path.join(articlesRoot, "images");
+fs.rmSync(IMAGES_DEST, { recursive: true, force: true });
+fs.mkdirSync(IMAGES_DEST, { recursive: true });
 if (fs.existsSync(imagesSrc)) {
-	fs.rmSync(IMAGES_DEST, { recursive: true, force: true });
-	fs.mkdirSync(IMAGES_DEST, { recursive: true });
 	copyDirectory(imagesSrc, IMAGES_DEST, { transformMarkdown: false, slug: null });
 	console.log(`[sync-content] images: articles/images -> blog/public/images`);
 }
@@ -61,6 +66,7 @@ fs.rmSync(POSTS_DEST, { recursive: true, force: true });
 fs.mkdirSync(POSTS_DEST, { recursive: true });
 
 syncPosts(POSTS_SRC, POSTS_DEST, []);
+fs.mkdirSync(POST_IMAGES_DEST, { recursive: true });
 console.log(`[sync-content] posts: articles/posts -> blog/src/content/posts`);
 
 // --- Sync spec ---
@@ -77,9 +83,7 @@ if (fs.existsSync(specSrc)) {
 syncSiteAssets();
 syncAnimeData();
 syncSiteConfig();
-
-// Ensure post images directory exists for co-located assets
-fs.mkdirSync(POST_IMAGES_DEST, { recursive: true });
+syncFriendsData();
 
 if (warnings.length > 0) {
 	console.warn("\n[sync-content] 警告：");
@@ -183,53 +187,174 @@ function syncPostFolder(srcDir, destDir, segments) {
 // ─── Markdown transformation ──────────────────────────────────────────────────
 
 function transformMarkdown(content, sourcePath, slug) {
-	let result = content;
-	result = convertObsidianEmbeds(result, sourcePath, slug);
-	result = convertWikiLinks(result, sourcePath);
-	result = normalizeImageLinks(result, slug);
+	const { frontmatter, body } = splitFrontmatter(content);
+	const transformed = transformMarkdownBody(body, sourcePath, slug);
+	return `${frontmatter}${transformed}`;
+}
+
+function transformMarkdownBody(content, sourcePath, slug) {
+	return transformNonCodeBlocks(content, (segment) => {
+		let result = segment;
+		result = stripObsidianComments(result);
+		result = convertObsidianEmbeds(result, sourcePath, slug);
+		result = convertWikiLinks(result, sourcePath);
+		result = normalizeImageLinks(result, slug);
+		result = convertObsidianBlockIds(result);
+		result = convertObsidianHighlights(result);
+		return result;
+	});
+}
+
+function splitFrontmatter(content) {
+	const match = content.match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)([\s\S]*)$/);
+	if (!match) {
+		return { frontmatter: "", body: content };
+	}
+	return { frontmatter: match[1], body: match[2] };
+}
+
+function transformNonCodeBlocks(content, transform) {
+	const fencePattern = /^(```|~~~)[^\n]*\r?\n[\s\S]*?^\1[ \t]*$/gm;
+	let result = "";
+	let cursor = 0;
+	let match;
+
+	while ((match = fencePattern.exec(content)) !== null) {
+		result += transformNonInlineCode(content.slice(cursor, match.index), transform);
+		result += match[0];
+		cursor = match.index + match[0].length;
+	}
+
+	result += transformNonInlineCode(content.slice(cursor), transform);
 	return result;
 }
 
+function transformNonInlineCode(content, transform) {
+	let result = "";
+	let cursor = 0;
+
+	while (cursor < content.length) {
+		const openerIndex = content.indexOf("`", cursor);
+		if (openerIndex < 0) {
+			result += transform(content.slice(cursor));
+			break;
+		}
+
+		const tickCount = countBackticks(content, openerIndex);
+		const closerIndex = content.indexOf("`".repeat(tickCount), openerIndex + tickCount);
+		if (closerIndex < 0) {
+			result += transform(content.slice(cursor));
+			break;
+		}
+
+		result += transform(content.slice(cursor, openerIndex));
+		result += content.slice(openerIndex, closerIndex + tickCount);
+		cursor = closerIndex + tickCount;
+	}
+
+	return result;
+}
+
+function countBackticks(content, start) {
+	let count = 0;
+	while (content[start + count] === "`") {
+		count++;
+	}
+	return count;
+}
+
+function stripObsidianComments(content) {
+	return content.replace(/%%[\s\S]*?%%/g, "");
+}
+
+function convertObsidianHighlights(content) {
+	return content.replace(/==([^=\n]+)==/g, (_match, text) => `<mark>${text}</mark>`);
+}
+
 function convertObsidianEmbeds(content, sourcePath, slug) {
-	return content.replace(/!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (match, target, alt) => {
+	return content.replace(/!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (match, target, option) => {
 		const filename = target.trim();
-		const altText = (alt || filename).trim();
-		const ext = path.extname(filename).toLowerCase();
+		const display = parseObsidianEmbedOption(option, filename);
+		const ext = path.extname(stripUrlSuffix(filename)).toLowerCase();
 
 		if (IMAGE_EXTS.has(ext)) {
-			if (slug) {
-				return `![${altText}](${publicPath("images", "posts", slug, filename)})`;
+			const src = slug
+				? publicPath("images", "posts", slug, filename)
+				: publicPath("images", "posts", filename);
+
+			if (display.width || display.height) {
+				const attrs = [
+					`src="${src}"`,
+					`alt="${escapeHtml(display.altText)}"`,
+					display.width ? `width="${display.width}"` : "",
+					display.height ? `height="${display.height}"` : "",
+				].filter(Boolean).join(" ");
+				return `<img ${attrs} />`;
 			}
-			return `![${altText}](${publicPath("images", "posts", filename)})`;
+
+			return `![${display.altText}](${src})`;
 		}
 
 		if (MEDIA_EXTS.has(ext)) {
-			if (slug) {
-				return `[${altText}](${publicPath("images", "posts", slug, filename)})`;
-			}
-			return `[${altText}](${publicPath("images", "posts", filename)})`;
+			const href = slug
+				? publicPath("images", "posts", slug, filename)
+				: publicPath("images", "posts", filename);
+			return `[${display.altText}](${href})`;
 		}
 
 		// Treat as wiki link to another post
 		const key = normalizeLookupKey(filename);
 		const resolved = postIndex.get(key);
 		if (resolved) {
-			return `[${altText}](/posts/${resolved}/)`;
+			return `[${display.altText}](/posts/${resolved}/)`;
 		}
 
 		if (isPrivateWikiTarget(filename)) {
-			return altText;
+			return display.altText;
 		}
 
 		warnings.push(`${path.relative(repoRoot, sourcePath)}: 无法解析嵌入 ${match}`);
-		return altText;
+		return display.altText;
 	});
+}
+
+function parseObsidianEmbedOption(option, filename) {
+	const value = String(option || "").trim();
+	const fallbackAlt = path.basename(stripUrlSuffix(filename));
+
+	if (!value) {
+		return { altText: fallbackAlt };
+	}
+
+	const dimension = value.match(/^(\d+)(?:\s*x\s*(\d+))?$/i);
+	if (dimension) {
+		return {
+			altText: fallbackAlt,
+			width: dimension[1],
+			height: dimension[2] || "",
+		};
+	}
+
+	const aliasWithDimension = value.match(/^(.+?)\s*\|\s*(\d+)(?:\s*x\s*(\d+))?$/i);
+	if (aliasWithDimension) {
+		return {
+			altText: aliasWithDimension[1].trim() || fallbackAlt,
+			width: aliasWithDimension[2],
+			height: aliasWithDimension[3] || "",
+		};
+	}
+
+	return { altText: value };
 }
 
 function convertWikiLinks(content, sourcePath) {
 	return content.replace(/\[\[([^\]|#]+)?(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g, (match, target = "", heading = "", alias = "") => {
 		const rawTarget = target.trim();
 		const label = (alias || heading || rawTarget).trim();
+
+		if (!rawTarget && heading) {
+			return `[${label || heading}](#${normalizeObsidianAnchor(heading)})`;
+		}
 
 		if (!rawTarget) {
 			return label || match;
@@ -247,7 +372,7 @@ function convertWikiLinks(content, sourcePath) {
 			return label || rawTarget;
 		}
 
-		const anchor = heading ? `#${slugify(heading)}` : "";
+		const anchor = heading ? `#${normalizeObsidianAnchor(heading)}` : "";
 		return `[${label || rawTarget}](/posts/${resolved}/${anchor})`;
 	});
 }
@@ -294,8 +419,33 @@ function normalizeImageLinks(content, slug) {
 	});
 }
 
+function convertObsidianBlockIds(content) {
+	return content.replace(/^[ \t]*\^([A-Za-z0-9_-]+)[ \t]*$/gm, (_match, id) => {
+		return `<a id="${id}"></a>`;
+	});
+}
+
+function normalizeObsidianAnchor(value) {
+	const clean = String(value || "").trim().replace(/^\^/, "");
+	return slugify(clean) || clean;
+}
+
 function publicPath(...segments) {
 	return encodeInternalPath(`/${segments.join("/")}`);
+}
+
+function stripUrlSuffix(value) {
+	const text = String(value || "");
+	const suffixIndex = firstSuffixIndex(text);
+	return suffixIndex >= 0 ? text.slice(0, suffixIndex) : text;
+}
+
+function escapeHtml(value) {
+	return String(value)
+		.replace(/&/g, "&amp;")
+		.replace(/"/g, "&quot;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
 }
 
 function encodeInternalPath(value) {
@@ -350,24 +500,24 @@ function copyDirectory(src, dest, options) {
 // ─── Site settings/assets sync ────────────────────────────────────────────────
 
 function syncSiteAssets() {
-	if (!fs.existsSync(SITE_ASSETS_SRC)) {
-		return;
-	}
-
 	copyManagedAssetFolder("profile", "profile");
 	copyManagedAssetFolder("banner/desktop", "desktop-banner");
 	copyManagedAssetFolder("banner/mobile", "mobile-banner");
 	copyManagedAssetFolder("music", "music");
-	console.log("[sync-content] site assets: articles/assets -> blog/public/assets");
+	copyManagedAssetFolder("friends", "friends");
+
+	if (fs.existsSync(SITE_ASSETS_SRC)) {
+		console.log("[sync-content] site assets: articles/assets -> blog/public/assets");
+	}
 }
 
 function copyManagedAssetFolder(sourceSegment, targetSegment) {
+	const dest = path.join(PUBLIC_ASSETS_DEST, ...targetSegment.split("/"));
+	fs.rmSync(dest, { recursive: true, force: true });
 	const src = path.join(SITE_ASSETS_SRC, ...sourceSegment.split("/"));
 	if (!fs.existsSync(src)) {
 		return;
 	}
-	const dest = path.join(PUBLIC_ASSETS_DEST, ...targetSegment.split("/"));
-	fs.rmSync(dest, { recursive: true, force: true });
 	fs.mkdirSync(dest, { recursive: true });
 	copyDirectory(src, dest, { transformMarkdown: false, slug: null });
 }
@@ -382,7 +532,7 @@ function syncSiteConfig() {
 	const music = readJson("music.json", null);
 	const generated = [
 		"// This file is generated by blog/scripts/sync-content.js.",
-		"// Edit articles/site/*.json and articles/assets/* instead.",
+		"// Edit articles/spec/site-config-hub.md, articles/site/*.json, and articles/assets/* instead.",
 		'import type { AnnouncementConfig, FullscreenWallpaperConfig, MusicPlayerConfig, NavBarConfig, ProfileConfig, SiteConfig } from "../types/config";',
 		'import { LinkPreset } from "../types/config";',
 		'import type { Song } from "../components/widgets/music-player/types";',
@@ -415,56 +565,104 @@ function syncSiteConfig() {
 	console.log("[sync-content] site config: articles/site -> blog/src/generated/obsidian-config.ts");
 }
 
-function syncAnimeData() {
-	if (!fs.existsSync(ANIME_SRC)) {
-		return;
+function syncFriendsData() {
+	fs.mkdirSync(path.dirname(GENERATED_FRIENDS_DEST), { recursive: true });
+
+	const friends = [];
+
+	if (fs.existsSync(FRIENDS_SRC)) {
+		for (const filePath of walk(FRIENDS_SRC)) {
+			if (!/\.(md|mdx)$/i.test(filePath)) {
+				continue;
+			}
+
+			const content = fs.readFileSync(filePath, "utf8");
+			const frontmatter = parseFrontmatter(content);
+			const friend = normalizeFriendItem(frontmatter, filePath, friends.length + 1);
+			if (friend) {
+				friends.push(friend);
+			}
+		}
 	}
 
+	const generated = [
+		"// This file is generated by blog/scripts/sync-content.js.",
+		"// Edit articles/friends/*.md and articles/assets/friends/* instead.",
+		"export interface FriendItem {",
+		"\tid: number;",
+		"\ttitle: string;",
+		"\timgurl: string;",
+		"\tdesc: string;",
+		"\tsiteurl: string;",
+		"\ttags: string[];",
+		"}",
+		"",
+		`export const friendsData = ${toTsObject(friends)} satisfies FriendItem[];`,
+		"",
+		"export function getFriendsList(): FriendItem[] {",
+		"\treturn friendsData;",
+		"}",
+		"",
+		"export function getShuffledFriendsList(): FriendItem[] {",
+		"\tconst shuffled = [...friendsData];",
+		"\tfor (let i = shuffled.length - 1; i > 0; i--) {",
+		"\t\tconst j = Math.floor(Math.random() * (i + 1));",
+		"\t\t[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];",
+		"\t}",
+		"\treturn shuffled;",
+		"}",
+		"",
+	].join("\n");
+
+	fs.writeFileSync(GENERATED_FRIENDS_DEST, generated);
+	console.log("[sync-content] friends: articles/friends -> blog/src/generated/friends.ts");
+}
+
+function syncAnimeData() {
 	const statusDirs = ["watching", "completed", "planned"];
 	const items = [];
 
 	// anime 目录由 articles/anime 完整托管，先清理旧平铺封面，避免页面引用混乱。
 	fs.rmSync(ANIME_PUBLIC_DEST, { recursive: true, force: true });
 	fs.mkdirSync(ANIME_PUBLIC_DEST, { recursive: true });
+	fs.mkdirSync(path.dirname(ANIME_DATA_DEST), { recursive: true });
 
-	for (const status of statusDirs) {
-		const dir = path.join(ANIME_SRC, status);
-		if (!fs.existsSync(dir)) {
-			continue;
-		}
-
-		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-			if (!entry.isFile() || !/\.(md|mdx)$/i.test(entry.name)) {
-				continue;
-			}
-			const sourcePath = path.join(dir, entry.name);
-			const content = fs.readFileSync(sourcePath, "utf8");
-			const frontmatter = parseFrontmatter(content);
-			if (!frontmatter.title) {
-				warnings.push(`${path.relative(repoRoot, sourcePath)}: 缺少 title，已忽略`);
+	if (fs.existsSync(ANIME_SRC)) {
+		for (const status of statusDirs) {
+			const dir = path.join(ANIME_SRC, status);
+			if (!fs.existsSync(dir)) {
 				continue;
 			}
 
-			const normalized = normalizeAnimeItem(frontmatter, status, sourcePath);
-			if (normalized.cover && !normalized.cover.startsWith("http") && !normalized.cover.startsWith("/")) {
-				const assetSource = path.join(ANIME_SRC, "assets", status, normalized.cover);
-				const assetDest = path.join(ANIME_PUBLIC_DEST, status, normalized.cover);
-				if (fs.existsSync(assetSource)) {
-					fs.mkdirSync(path.dirname(assetDest), { recursive: true });
-					fs.copyFileSync(assetSource, assetDest);
-					normalized.cover = `/assets/anime/${status}/${normalized.cover.replaceAll("\\", "/")}`;
-				} else {
-					warnings.push(`${path.relative(repoRoot, sourcePath)}: 找不到封面 ${path.relative(repoRoot, assetSource)}`);
-					normalized.cover = "";
+			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+				if (!entry.isFile() || !/\.(md|mdx)$/i.test(entry.name)) {
+					continue;
 				}
+				const sourcePath = path.join(dir, entry.name);
+				const content = fs.readFileSync(sourcePath, "utf8");
+				const frontmatter = parseFrontmatter(content);
+				if (!frontmatter.title) {
+					warnings.push(`${path.relative(repoRoot, sourcePath)}: 缺少 title，已忽略`);
+					continue;
+				}
+
+				const normalized = normalizeAnimeItem(frontmatter, status, sourcePath);
+				if (normalized.cover && !normalized.cover.startsWith("http") && !normalized.cover.startsWith("/")) {
+					const assetSource = path.join(ANIME_SRC, "assets", status, normalized.cover);
+					const assetDest = path.join(ANIME_PUBLIC_DEST, status, normalized.cover);
+					if (fs.existsSync(assetSource)) {
+						fs.mkdirSync(path.dirname(assetDest), { recursive: true });
+						fs.copyFileSync(assetSource, assetDest);
+						normalized.cover = `/assets/anime/${status}/${normalized.cover.replaceAll("\\", "/")}`;
+					} else {
+						warnings.push(`${path.relative(repoRoot, sourcePath)}: 找不到封面 ${path.relative(repoRoot, assetSource)}`);
+						normalized.cover = "";
+					}
+				}
+
+				items.push(normalized);
 			}
-
-			items.push(normalized);
 		}
-	}
-
-	if (!items.length) {
-		return;
 	}
 
 	const generated = [
@@ -497,13 +695,240 @@ function syncAnimeData() {
 	console.log("[sync-content] anime: articles/anime -> blog/src/data/anime.ts");
 }
 
+function collectArticleChangeSummary() {
+	if (!hasGitHead()) {
+		return null;
+	}
+
+	const diffResult = runGitCommand([
+		"diff",
+		"--name-status",
+		"--find-renames",
+		"HEAD",
+		"--",
+		"articles",
+	]);
+	if (!diffResult) {
+		return null;
+	}
+
+	const untrackedResult = runGitCommand([
+		"ls-files",
+		"--others",
+		"--exclude-standard",
+		"--",
+		"articles",
+	]);
+	if (!untrackedResult) {
+		return null;
+	}
+
+	const summary = {
+		added: [],
+		modified: [],
+		deleted: [],
+		renamed: [],
+		draftToPublished: [],
+		publishedToDraft: [],
+	};
+	const seenAdded = new Set();
+
+	for (const rawLine of diffResult.stdout.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line) {
+			continue;
+		}
+
+		const [status, firstPath = "", secondPath = ""] = line.split("\t");
+		if (!status || !firstPath) {
+			continue;
+		}
+
+		if (status.startsWith("R")) {
+			const fromPath = formatArticlePath(firstPath);
+			const toPath = formatArticlePath(secondPath);
+			summary.renamed.push(`${fromPath} -> ${toPath}`);
+			pushDraftTransition(summary, firstPath, secondPath, `${fromPath} -> ${toPath}`);
+			continue;
+		}
+
+		const displayPath = formatArticlePath(firstPath);
+		if (status.startsWith("A")) {
+			pushAddedPath(summary, seenAdded, firstPath);
+			continue;
+		}
+
+		if (status.startsWith("D")) {
+			summary.deleted.push(displayPath);
+			continue;
+		}
+
+		summary.modified.push(displayPath);
+		pushDraftTransition(summary, firstPath, firstPath, displayPath);
+	}
+
+	for (const rawLine of untrackedResult.stdout.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line) {
+			continue;
+		}
+		pushAddedPath(summary, seenAdded, line);
+	}
+
+	return summary;
+}
+
+function printArticleChangeSummary(summary) {
+	if (!summary) {
+		return;
+	}
+
+	const groups = [
+		["新增", summary.added],
+		["修改", summary.modified],
+		["删除", summary.deleted],
+		["改名", summary.renamed],
+		["草稿 -> 已发布", summary.draftToPublished],
+		["已发布 -> 草稿", summary.publishedToDraft],
+	];
+	const hasChanges = groups.some(([, items]) => items.length > 0);
+
+	if (!hasChanges) {
+		console.log("[sync-content] articles diff since HEAD: no source changes");
+		return;
+	}
+
+	console.log("[sync-content] articles diff since HEAD:");
+	for (const [label, items] of groups) {
+		if (!items.length) {
+			continue;
+		}
+		console.log(`  ${label} (${items.length}):`);
+		for (const item of items) {
+			console.log(`    - ${item}`);
+		}
+	}
+}
+
+function pushAddedPath(summary, seenAdded, repoRelativePath) {
+	const displayPath = formatArticlePath(repoRelativePath);
+	if (seenAdded.has(displayPath)) {
+		return;
+	}
+
+	seenAdded.add(displayPath);
+	summary.added.push(decorateAddedArticlePath(repoRelativePath, displayPath));
+}
+
+function decorateAddedArticlePath(repoRelativePath, displayPath) {
+	if (!isPostSourceMarkdown(repoRelativePath)) {
+		return displayPath;
+	}
+
+	const currentDraft = readDraftStateFromDisk(repoRelativePath);
+	if (currentDraft === null) {
+		return displayPath;
+	}
+
+	return `${displayPath}（${currentDraft ? "草稿" : "已发布"}）`;
+}
+
+function pushDraftTransition(summary, beforePath, afterPath, displayPath) {
+	if (!isPostSourceMarkdown(beforePath) && !isPostSourceMarkdown(afterPath)) {
+		return;
+	}
+
+	const beforeDraft = readDraftStateFromGit(beforePath);
+	const afterDraft = readDraftStateFromDisk(afterPath);
+	if (beforeDraft === null || afterDraft === null || beforeDraft === afterDraft) {
+		return;
+	}
+
+	if (beforeDraft && !afterDraft) {
+		summary.draftToPublished.push(displayPath);
+		return;
+	}
+
+	if (!beforeDraft && afterDraft) {
+		summary.publishedToDraft.push(displayPath);
+	}
+}
+
+function readDraftStateFromDisk(repoRelativePath) {
+	const filePath = path.join(repoRoot, normalizeRepoRelativePath(repoRelativePath));
+	if (!fs.existsSync(filePath)) {
+		return null;
+	}
+	return readDraftState(fs.readFileSync(filePath, "utf8"));
+}
+
+function readDraftStateFromGit(repoRelativePath) {
+	const normalized = normalizeRepoRelativePath(repoRelativePath);
+	const result = runGitCommand(["show", `HEAD:${normalized}`]);
+	if (!result) {
+		return null;
+	}
+	return readDraftState(result.stdout);
+}
+
+function readDraftState(content) {
+	if (typeof content !== "string" || !content.length) {
+		return null;
+	}
+	const frontmatter = parseFrontmatter(content);
+	const draftValue = frontmatter.draft;
+	if (draftValue === undefined || draftValue === null || draftValue === "") {
+		return false;
+	}
+	if (typeof draftValue === "boolean") {
+		return draftValue;
+	}
+	return String(draftValue).trim().toLowerCase() === "true";
+}
+
+function isPostSourceMarkdown(repoRelativePath) {
+	const normalized = normalizeRepoRelativePath(repoRelativePath);
+	return /^articles\/posts\/.+\.(md|mdx)$/i.test(normalized);
+}
+
+function formatArticlePath(repoRelativePath) {
+	return normalizeRepoRelativePath(repoRelativePath).replace(/^articles\//, "");
+}
+
+function normalizeRepoRelativePath(repoRelativePath) {
+	return String(repoRelativePath || "")
+		.replaceAll("\\", "/")
+		.replace(/^\.\/+/, "")
+		.replace(/^\/+/, "")
+		.trim();
+}
+
+function hasGitHead() {
+	const result = spawnSync("git", ["-C", repoRoot, "rev-parse", "--verify", "HEAD"], {
+		encoding: "utf8",
+		windowsHide: true,
+	});
+	return result.status === 0;
+}
+
+function runGitCommand(args) {
+	const result = spawnSync("git", ["-C", repoRoot, ...args], {
+		encoding: "utf8",
+		windowsHide: true,
+		maxBuffer: 10 * 1024 * 1024,
+	});
+	return result.status === 0 ? result : null;
+}
+
 function parseFrontmatter(content) {
 	const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
 	if (!match) {
 		return {};
 	}
 	const result = {};
-	for (const rawLine of match[1].split(/\r?\n/)) {
+	const lines = match[1].split(/\r?\n/);
+	for (let index = 0; index < lines.length; index++) {
+		const rawLine = lines[index];
 		const line = rawLine.trim();
 		if (!line || line.startsWith("#")) {
 			continue;
@@ -514,6 +939,23 @@ function parseFrontmatter(content) {
 		}
 		const key = line.slice(0, colon).trim();
 		const rawValue = line.slice(colon + 1).trim();
+		if (rawValue === "") {
+			const list = [];
+			let cursor = index + 1;
+			while (cursor < lines.length) {
+				const listMatch = lines[cursor].match(/^\s*-\s+(.+?)\s*$/);
+				if (!listMatch) {
+					break;
+				}
+				list.push(parseFrontmatterValue(listMatch[1]));
+				cursor++;
+			}
+			if (list.length) {
+				result[key] = list;
+				index = cursor - 1;
+				continue;
+			}
+		}
 		result[key] = parseFrontmatterValue(rawValue);
 	}
 	return result;
@@ -562,6 +1004,51 @@ function normalizeAnimeItem(frontmatter, status, sourcePath) {
 		startDate: String(frontmatter.startDate ?? ""),
 		endDate: String(frontmatter.endDate ?? ""),
 	};
+}
+
+function normalizeFriendItem(frontmatter, sourcePath, fallbackId) {
+	if (frontmatter.visible === false || frontmatter.visible === "false") {
+		return null;
+	}
+
+	const title = String(frontmatter.title ?? "").trim();
+	const siteurl = String(frontmatter.siteurl ?? frontmatter.url ?? "").trim();
+
+	if (!title) {
+		warnings.push(`${path.relative(repoRoot, sourcePath)}: 友链缺少 title，已忽略`);
+		return null;
+	}
+
+	if (!siteurl) {
+		warnings.push(`${path.relative(repoRoot, sourcePath)}: 友链缺少 siteurl，已忽略`);
+		return null;
+	}
+
+	return {
+		id: Number(frontmatter.id) || fallbackId,
+		title,
+		imgurl: normalizeFriendImage(frontmatter.imgurl ?? frontmatter.avatar ?? ""),
+		desc: String(frontmatter.desc ?? frontmatter.description ?? "").trim(),
+		siteurl,
+		tags: Array.isArray(frontmatter.tags)
+			? frontmatter.tags.map(String).filter(Boolean)
+			: [],
+	};
+}
+
+function normalizeFriendImage(value) {
+	const image = String(value || "").trim();
+	if (!image) {
+		return "";
+	}
+	if (
+		image.startsWith("http://") ||
+		image.startsWith("https://") ||
+		image.startsWith("/")
+	) {
+		return image;
+	}
+	return toPublicAssetPath("friends", image);
 }
 
 function readJson(filename, fallback) {
@@ -939,11 +1426,6 @@ function isPrivateWikiTarget(value) {
 }
 
 function readFrontmatterTitle(content) {
-	const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-	if (!frontmatter) {
-		return "";
-	}
-
-	const title = frontmatter[1].match(/^title:\s*(.+)$/m);
-	return title ? title[1].replace(/^["']|["']$/g, "").trim() : "";
+	const frontmatter = parseFrontmatter(content);
+	return frontmatter.title ? String(frontmatter.title).trim() : "";
 }

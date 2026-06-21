@@ -1,4 +1,4 @@
-const { Plugin, Notice } = require("obsidian");
+const { Plugin, Notice, setIcon } = require("obsidian");
 const {
   getLocalDateString,
   getPostContentFingerprint,
@@ -7,8 +7,12 @@ const {
   updatePostHistoryForCommit,
 } = createHistoryCore();
 const {
+  buildLocalPreviewCommand,
   buildPublishCommand,
+  buildStopPreviewCommand,
   getPluginLogPath,
+  getPreviewLogPath,
+  getPreviewPidPath,
   getPublishLogPath,
 } = createPublishCore();
 
@@ -226,15 +230,10 @@ function createHistoryCore() {
 }
 
 function createPublishCore() {
-  function buildPublishCommand(vaultBasePath, options = {}) {
+  function buildScriptCommand(vaultBasePath, scriptName, options = {}) {
     const repoRoot = getRepoRoot(vaultBasePath);
-    const scriptPath = joinPath(
-      repoRoot,
-      "scripts",
-      "deploy-blog-from-obsidian.ps1",
-    );
+    const scriptPath = joinPath(repoRoot, "scripts", scriptName);
     const command = options.powershellCommand || "powershell.exe";
-
     const args = [
       "-NoProfile",
       "-ExecutionPolicy",
@@ -242,6 +241,22 @@ function createPublishCore() {
       "-File",
       scriptPath,
     ];
+
+    return {
+      args,
+      command,
+      cwd: repoRoot,
+      scriptPath,
+    };
+  }
+
+  function buildPublishCommand(vaultBasePath, options = {}) {
+    const baseCommand = buildScriptCommand(
+      vaultBasePath,
+      "deploy-blog-from-obsidian.ps1",
+      options,
+    );
+    const args = [...baseCommand.args];
 
     if (options.skipInstall !== false) {
       args.push("-SkipInstall");
@@ -260,11 +275,35 @@ function createPublishCore() {
     }
 
     return {
+      ...baseCommand,
       args,
-      command,
-      cwd: repoRoot,
-      scriptPath,
     };
+  }
+
+  function buildLocalPreviewCommand(vaultBasePath, options = {}) {
+    const baseCommand = buildScriptCommand(
+      vaultBasePath,
+      "local-preview.ps1",
+      options,
+    );
+    const args = [...baseCommand.args];
+
+    if (options.skipInstall !== false) {
+      args.push("-SkipInstall");
+    }
+
+    if (Number.isInteger(options.blogPort)) {
+      args.push("-BlogPort", String(options.blogPort));
+    }
+
+    return {
+      ...baseCommand,
+      args,
+    };
+  }
+
+  function buildStopPreviewCommand(vaultBasePath, options = {}) {
+    return buildScriptCommand(vaultBasePath, "stop-preview.ps1", options);
   }
 
   function getRepoRoot(vaultBasePath) {
@@ -285,8 +324,16 @@ function createPublishCore() {
     return joinPath(getPluginDir(vaultBasePath), "publish.log");
   }
 
+  function getPreviewLogPath(vaultBasePath) {
+    return joinPath(getPluginDir(vaultBasePath), "preview.log");
+  }
+
   function getPluginLogPath(vaultBasePath) {
     return joinPath(getPluginDir(vaultBasePath), "plugin.log");
+  }
+
+  function getPreviewPidPath(vaultBasePath) {
+    return joinPath(getRepoRoot(vaultBasePath), ".preview-pids.json");
   }
 
   function joinPath(...parts) {
@@ -308,8 +355,12 @@ function createPublishCore() {
   }
 
   return {
+    buildLocalPreviewCommand,
     buildPublishCommand,
+    buildStopPreviewCommand,
     getPluginLogPath,
+    getPreviewLogPath,
+    getPreviewPidPath,
     getPublishLogPath,
   };
 }
@@ -317,14 +368,22 @@ function createPublishCore() {
 module.exports = class PostHistoryTrackerPlugin extends Plugin {
   async onload() {
     this.publishProcess = null;
+    this.previewLauncherProcess = null;
+    this.previewToggleBusy = false;
+    this.previewRibbon = null;
+    this.statusBarItem = null;
     this.vaultBasePath = "";
     this.pluginLogPath = "";
     this.publishLogPath = "";
+    this.previewLogPath = "";
+    this.previewPidPath = "";
 
     try {
       this.vaultBasePath = this.getVaultBasePath();
       this.pluginLogPath = getPluginLogPath(this.vaultBasePath);
       this.publishLogPath = getPublishLogPath(this.vaultBasePath);
+      this.previewLogPath = getPreviewLogPath(this.vaultBasePath);
+      this.previewPidPath = getPreviewPidPath(this.vaultBasePath);
     } catch (error) {
       this.handleStartupError("vault path", error);
     }
@@ -332,6 +391,20 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
     this.appendPluginLog(`[${new Date().toISOString()}] plugin loaded\n`);
 
     try {
+      this.previewRibbon = this.addRibbonIcon(
+        "play",
+        "启动博客预览",
+        () => {
+          void this.toggleLocalPreview();
+        },
+      );
+      if (
+        this.previewRibbon &&
+        typeof this.previewRibbon.addClass === "function"
+      ) {
+        this.previewRibbon.addClass("post-history-tracker-preview-button");
+      }
+
       const publishRibbon = this.addRibbonIcon(
         "upload",
         "一键提交并推送博客",
@@ -344,6 +417,14 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
       }
 
       this.addCommand({
+        id: "preview-blog-locally",
+        name: "本地预览博客",
+        callback: () => {
+          void this.toggleLocalPreview();
+        },
+      });
+
+      this.addCommand({
         id: "publish-blog-from-obsidian",
         name: "一键提交并推送博客",
         callback: () => {
@@ -351,10 +432,27 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
         },
       });
 
-      const statusBarItem = this.addStatusBarItem();
-      statusBarItem.setText("博客一键发布已加载");
-      if (typeof statusBarItem.addClass === "function") {
-        statusBarItem.addClass("post-history-tracker-status");
+      this.addCommand({
+        id: "open-blog-site-config-hub",
+        name: "打开博客站点配置入口",
+        callback: () => {
+          void this.openVaultPath("spec/site-config-hub.md");
+        },
+      });
+
+      this.statusBarItem = this.addStatusBarItem();
+      this.statusBarItem.setText("博客一键发布已加载");
+      if (typeof this.statusBarItem.addClass === "function") {
+        this.statusBarItem.addClass("post-history-tracker-status");
+      }
+
+      this.refreshPreviewButtonState();
+      if (typeof this.registerInterval === "function") {
+        this.registerInterval(
+          setInterval(() => {
+            this.refreshPreviewButtonState();
+          }, 5000),
+        );
       }
     } catch (error) {
       this.handleStartupError("ui registration", error);
@@ -371,6 +469,320 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
   }
 
   onunload() {
+  }
+
+  async toggleLocalPreview() {
+    if (this.previewToggleBusy || this.previewLauncherProcess) {
+      new Notice("博客预览正在处理中。");
+      return;
+    }
+
+    const state = this.getPreviewRuntimeState();
+    if (state.running) {
+      await this.stopLocalPreview();
+      return;
+    }
+
+    await this.startLocalPreview();
+  }
+
+  refreshPreviewButtonState() {
+    const state = this.getPreviewRuntimeState();
+    const isRunning = state.running;
+    const icon = this.previewToggleBusy ? "loader" : isRunning ? "square" : "play";
+    const label = this.previewToggleBusy
+      ? "博客预览处理中"
+      : isRunning
+        ? "停止博客预览"
+        : "启动博客预览";
+
+    if (this.previewRibbon) {
+      if (typeof setIcon === "function") {
+        setIcon(this.previewRibbon, icon);
+      }
+      this.previewRibbon.setAttribute("aria-label", label);
+      this.previewRibbon.setAttribute("title", label);
+      this.previewRibbon.toggleClass?.(
+        "post-history-tracker-preview-running",
+        isRunning,
+      );
+      this.previewRibbon.toggleClass?.(
+        "post-history-tracker-preview-busy",
+        this.previewToggleBusy,
+      );
+    }
+
+    if (this.statusBarItem) {
+      this.statusBarItem.setText(
+        this.previewToggleBusy
+          ? "博客预览处理中"
+          : isRunning
+            ? "博客预览运行中"
+            : "博客一键发布已加载",
+      );
+    }
+  }
+
+  getPreviewRuntimeState(options = {}) {
+    const cleanupStale = options.cleanupStale !== false;
+    const preview = this.readPreviewUrls();
+    const blogPid = Number(preview.blogPid);
+    const normalizedPid =
+      Number.isInteger(blogPid) && blogPid > 0 ? blogPid : 0;
+    const blogUrl =
+      typeof preview.blogUrl === "string" ? preview.blogUrl.trim() : "";
+    const running = normalizedPid > 0 && this.isProcessAlive(normalizedPid);
+
+    if (normalizedPid > 0 && !running && cleanupStale) {
+      this.removePreviewPidFile();
+    }
+
+    return {
+      blogPid: normalizedPid,
+      blogUrl,
+      running,
+    };
+  }
+
+  isProcessAlive(processId) {
+    if (!Number.isInteger(processId) || processId <= 0) {
+      return false;
+    }
+
+    try {
+      process.kill(processId, 0);
+      return true;
+    } catch (error) {
+      return error && error.code === "EPERM";
+    }
+  }
+
+  removePreviewPidFile() {
+    if (!this.previewPidPath) {
+      return;
+    }
+
+    try {
+      const fs = require("fs");
+      if (fs.existsSync(this.previewPidPath)) {
+        fs.rmSync(this.previewPidPath, { force: true });
+      }
+    } catch (error) {
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] preview pid cleanup failed: ${error.stack || error.message}\n`,
+      );
+    }
+  }
+
+  async waitForPreviewState(timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastState = this.getPreviewRuntimeState({ cleanupStale: false });
+
+    while (Date.now() < deadline) {
+      const state = this.getPreviewRuntimeState({ cleanupStale: false });
+      if (state.running) {
+        return state;
+      }
+      lastState = state;
+      await this.sleep(300);
+    }
+
+    return lastState;
+  }
+
+  sleep(timeoutMs) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    });
+  }
+
+  async startLocalPreview() {
+    if (this.publishProcess) {
+      new Notice("博客正在发布中，暂时不能启动本地预览。");
+      return;
+    }
+
+    if (!this.vaultBasePath) {
+      new Notice("无法读取 Obsidian vault 本地路径，不能启动预览。", 10000);
+      return;
+    }
+
+    const existingState = this.getPreviewRuntimeState();
+    if (existingState.running) {
+      this.refreshPreviewButtonState();
+      if (existingState.blogUrl) {
+        await this.openPreviewUrl(existingState.blogUrl);
+        new Notice(`博客预览已经在运行：${existingState.blogUrl}`, 10000);
+      } else {
+        new Notice("博客预览已经在运行。", 7000);
+      }
+      return;
+    }
+
+    const previewCommand = buildLocalPreviewCommand(this.vaultBasePath);
+    const { spawn } = require("child_process");
+    const fs = require("fs");
+
+    if (!fs.existsSync(previewCommand.scriptPath)) {
+      new Notice(`本地预览脚本不存在：${previewCommand.scriptPath}`);
+      return;
+    }
+
+    this.previewToggleBusy = true;
+    this.refreshPreviewButtonState();
+    this.appendPreviewLog(
+      [
+        "",
+        `[${new Date().toISOString()}] start local preview`,
+        `cwd: ${previewCommand.cwd}`,
+        `command: ${previewCommand.command} ${previewCommand.args.join(" ")}`,
+        "",
+      ].join("\n"),
+    );
+
+    new Notice("开始本地预览：会先同步内容、构建博客，再启动预览服务。", 7000);
+
+    try {
+      const child = spawn(previewCommand.command, previewCommand.args, {
+        cwd: previewCommand.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      this.previewLauncherProcess = child;
+
+      child.stdout.on("data", (chunk) => {
+        this.handlePreviewOutput("stdout", chunk);
+      });
+
+      child.stderr.on("data", (chunk) => {
+        this.handlePreviewOutput("stderr", chunk);
+      });
+
+      await new Promise((resolve, reject) => {
+        child.on("error", (error) => {
+          reject(error);
+        });
+
+        child.on("close", (code) => {
+          this.appendPreviewLog(
+            `[${new Date().toISOString()}] preview launcher exited with code ${code}\n`,
+          );
+
+          if (code === 0) {
+            resolve();
+            return;
+          }
+
+          reject(new Error(`预览启动器退出码 ${code}`));
+        });
+      });
+
+      const previewState = await this.waitForPreviewState();
+      if (previewState.blogUrl) {
+        const opened = await this.openPreviewUrl(previewState.blogUrl);
+        new Notice(
+          opened
+            ? `本地预览已启动：${previewState.blogUrl}`
+            : `本地预览已启动，但浏览器没有自动打开：${previewState.blogUrl}`,
+          10000,
+        );
+      } else {
+        new Notice("本地预览已启动。查看 preview.log。", 10000);
+      }
+    } catch (error) {
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] preview start failed: ${error.stack || error.message}\n`,
+      );
+      console.error("[post-history-tracker] local preview failed", error);
+      new Notice(`本地预览失败：${error.message}`, 10000);
+    } finally {
+      this.previewLauncherProcess = null;
+      this.previewToggleBusy = false;
+      this.refreshPreviewButtonState();
+    }
+  }
+
+  async stopLocalPreview() {
+    if (!this.vaultBasePath) {
+      new Notice("无法读取 Obsidian vault 本地路径，不能停止预览。", 10000);
+      return;
+    }
+
+    const state = this.getPreviewRuntimeState({ cleanupStale: false });
+    if (!state.running && !state.blogPid) {
+      this.removePreviewPidFile();
+      this.refreshPreviewButtonState();
+      new Notice("博客预览已经是停止状态。", 5000);
+      return;
+    }
+
+    const stopCommand = buildStopPreviewCommand(this.vaultBasePath);
+    const { spawn } = require("child_process");
+    const fs = require("fs");
+
+    if (!fs.existsSync(stopCommand.scriptPath)) {
+      new Notice(`停止预览脚本不存在：${stopCommand.scriptPath}`);
+      return;
+    }
+
+    this.previewToggleBusy = true;
+    this.refreshPreviewButtonState();
+    this.appendPreviewLog(
+      [
+        "",
+        `[${new Date().toISOString()}] stop local preview`,
+        `cwd: ${stopCommand.cwd}`,
+        `command: ${stopCommand.command} ${stopCommand.args.join(" ")}`,
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const child = spawn(stopCommand.command, stopCommand.args, {
+        cwd: stopCommand.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      child.stdout.on("data", (chunk) => {
+        this.handlePreviewOutput("stdout", chunk);
+      });
+
+      child.stderr.on("data", (chunk) => {
+        this.handlePreviewOutput("stderr", chunk);
+      });
+
+      await new Promise((resolve, reject) => {
+        child.on("error", (error) => {
+          reject(error);
+        });
+
+        child.on("close", (code) => {
+          this.appendPreviewLog(
+            `[${new Date().toISOString()}] preview stop exited with code ${code}\n`,
+          );
+
+          if (code === 0) {
+            resolve();
+            return;
+          }
+
+          reject(new Error(`预览停止器退出码 ${code}`));
+        });
+      });
+
+      this.removePreviewPidFile();
+      new Notice("博客预览已停止。", 7000);
+    } catch (error) {
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] preview stop failed: ${error.stack || error.message}\n`,
+      );
+      console.error("[post-history-tracker] local preview stop failed", error);
+      new Notice(`停止预览失败：${error.message}`, 10000);
+    } finally {
+      this.previewToggleBusy = false;
+      this.refreshPreviewButtonState();
+    }
   }
 
   async publishBlog() {
@@ -470,6 +882,12 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
     console.log(`[post-history-tracker] publish ${stream}:`, text.trim());
   }
 
+  handlePreviewOutput(stream, chunk) {
+    const text = chunk.toString();
+    this.appendPreviewLog(text);
+    console.log(`[post-history-tracker] preview ${stream}:`, text.trim());
+  }
+
   appendPublishLog(text) {
     if (!this.publishLogPath) {
       console.log(`[post-history-tracker] ${text.trim()}`);
@@ -483,6 +901,22 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
       fs.appendFileSync(this.publishLogPath, text, "utf8");
     } catch (error) {
       console.warn("[post-history-tracker] publish log write failed", error);
+    }
+  }
+
+  appendPreviewLog(text) {
+    if (!this.previewLogPath) {
+      console.log(`[post-history-tracker] ${text.trim()}`);
+      return;
+    }
+
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      fs.mkdirSync(path.dirname(this.previewLogPath), { recursive: true });
+      fs.appendFileSync(this.previewLogPath, text, "utf8");
+    } catch (error) {
+      console.warn("[post-history-tracker] preview log write failed", error);
     }
   }
 
@@ -500,6 +934,148 @@ module.exports = class PostHistoryTrackerPlugin extends Plugin {
     } catch (error) {
       console.warn("[post-history-tracker] plugin log write failed", error);
     }
+  }
+
+  readPreviewUrls() {
+    if (!this.previewPidPath) {
+      return {};
+    }
+
+    try {
+      const fs = require("fs");
+      if (!fs.existsSync(this.previewPidPath)) {
+        return {};
+      }
+
+      const rawJson = fs
+        .readFileSync(this.previewPidPath, "utf8")
+        .replace(/^\uFEFF/, "");
+      const parsed = JSON.parse(rawJson);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] preview pid read failed: ${error.stack || error.message}\n`,
+      );
+      return {};
+    }
+  }
+
+  async openPreviewUrl(url) {
+    if (!url) {
+      return false;
+    }
+
+    this.appendPreviewLog(
+      `[${new Date().toISOString()}] attempt open browser: ${url}\n`,
+    );
+
+    try {
+      const { shell } = require("electron");
+      if (shell && typeof shell.openExternal === "function") {
+        await Promise.resolve(shell.openExternal(url));
+        this.appendPreviewLog(
+          `[${new Date().toISOString()}] browser opened via electron shell\n`,
+        );
+        return true;
+      }
+    } catch (error) {
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] electron openExternal unavailable: ${error.stack || error.message}\n`,
+      );
+    }
+
+    try {
+      const { spawn } = require("child_process");
+      const platform = process.platform;
+      if (platform === "win32") {
+        const child = await this.spawnDetachedCommand("cmd", [
+          "/c",
+          "start",
+          "",
+          url,
+        ]);
+        if (child) {
+          child.unref();
+        }
+        this.appendPreviewLog(
+          `[${new Date().toISOString()}] browser opened via cmd start\n`,
+        );
+        return true;
+      }
+
+      if (platform === "darwin") {
+        const child = await this.spawnDetachedCommand("open", [url]);
+        if (child) {
+          child.unref();
+        }
+        this.appendPreviewLog(
+          `[${new Date().toISOString()}] browser opened via open\n`,
+        );
+        return true;
+      }
+
+      const child = await this.spawnDetachedCommand("xdg-open", [url]);
+      if (child) {
+        child.unref();
+      }
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] browser opened via xdg-open\n`,
+      );
+      return true;
+    } catch (error) {
+      this.appendPreviewLog(
+        `[${new Date().toISOString()}] preview browser open failed: ${error.stack || error.message}\n`,
+      );
+    }
+
+    return false;
+  }
+
+  spawnDetachedCommand(command, args) {
+    const { spawn } = require("child_process");
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const child = spawn(command, args, {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+
+      child.once("error", (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      });
+
+      child.once("spawn", () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(child);
+      });
+    });
+  }
+
+  async openVaultPath(filePath) {
+    const file = this.getVaultFileByPath(filePath);
+    if (!file) {
+      new Notice(`找不到文件：${filePath}`, 7000);
+      return;
+    }
+
+    const leaf =
+      this.app.workspace.getLeaf?.(true) ||
+      this.app.workspace.getMostRecentLeaf?.();
+    if (!leaf || typeof leaf.openFile !== "function") {
+      new Notice(`无法在 Obsidian 中打开：${filePath}`, 7000);
+      return;
+    }
+
+    await leaf.openFile(file);
   }
 
   getVaultBasePath() {

@@ -17,6 +17,8 @@ $SyncScript = Join-Path $BlogDir "scripts\sync-content.js"
 
 $GitPublishPaths = @(
   "articles/posts",
+  "articles/friends",
+  "articles/anime",
   "articles/templates",
   "articles/spec",
   "articles/site",
@@ -28,9 +30,12 @@ $GitPublishPaths = @(
   "articles/.obsidian/plugins/post-history-tracker",
   "blog/src/content/posts",
   "blog/src/content/spec",
+  "blog/src/data/anime.ts",
+  "blog/src/data/friends.ts",
   "blog/public/_redirects",
   "blog/public/assets",
   "blog/public/images/posts",
+  "blog/src/generated/friends.ts",
   "blog/src/generated/obsidian-config.ts"
 )
 

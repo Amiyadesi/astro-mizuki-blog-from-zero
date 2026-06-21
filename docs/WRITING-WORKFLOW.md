@@ -28,6 +28,26 @@ The starter enables:
 
 Use `articles/templates/blog-post.md` for new posts.
 
+## Preview
+
+From Obsidian, click the preview ribbon icon or run:
+
+```text
+本地预览博客
+```
+
+The button starts the blog preview and opens:
+
+```text
+http://127.0.0.1:4173/
+```
+
+Click the same button again to stop the preview service.
+
+The preview script expects `blog/package.json` to provide `build` and
+`preview` scripts. `blog/package-scripts.example.json` shows the expected
+entries.
+
 ## Publish
 
 From the repository root:

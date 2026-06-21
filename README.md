@@ -7,6 +7,7 @@ inspired by the official Mizuki content repository, while adding:
 
 - an `articles/` Obsidian vault for writing posts;
 - a local Obsidian plugin for one-click sync, commit, and push;
+- a local Obsidian preview button for starting/stopping the blog preview;
 - a blog post template with edit-history fields;
 - a content sync script for folder-per-post Markdown and co-located assets;
 - a sample Cloudflare Pages GitHub Actions workflow.
@@ -20,9 +21,12 @@ production secrets.
 .
 ├─ articles/
 │  ├─ posts/                         # Obsidian writing source
+│  ├─ friends/                       # Friend link cards
 │  ├─ templates/blog-post.md          # New post template
-│  ├─ spec/about.md                   # Example special page
-│  ├─ site/                           # Optional site config JSON
+│  ├─ spec/about.md                   # About page
+│  ├─ spec/friends.md                 # Friends page body
+│  ├─ site/                           # Profile, navigation, banner, music JSON
+│  ├─ assets/                         # Profile, banner, music, friend assets
 │  └─ .obsidian/
 │     └─ plugins/post-history-tracker # Local publish plugin
 ├─ blog/
@@ -41,23 +45,31 @@ content under `blog/src/content/posts/` should not be edited by hand.
 1. Create or clone your Mizuki blog code into `blog/`.
 2. Keep this repository's `articles/`, `blog/scripts/sync-content.js`, and
    `scripts/deploy-blog-from-obsidian.ps1`.
-3. Install your Mizuki dependencies inside `blog/`.
-4. Open `articles/` as an Obsidian vault.
-5. Enable the local community plugin `Post History Tracker` if Obsidian asks.
-6. Write posts in `articles/posts/`.
-7. Run:
+3. Merge `blog/package-scripts.example.json` into `blog/package.json`.
+4. Install your Mizuki dependencies inside `blog/`.
+5. Open `articles/` as an Obsidian vault.
+6. Enable the local community plugin `Post History Tracker` if Obsidian asks.
+7. Write posts in `articles/posts/`.
+8. Run:
 
 ```powershell
 .\scripts\deploy-blog-from-obsidian.ps1 -SkipInstall -CommitChanges -PushChanges
 ```
 
-For local preview only:
+For local preview, use the Obsidian ribbon button:
 
-```powershell
-node .\blog\scripts\sync-content.js
-cd blog
-pnpm run dev
+```text
+启动博客预览
 ```
+
+It syncs content, builds the blog, starts the preview service, and opens:
+
+```text
+http://127.0.0.1:4173/
+```
+
+The same button becomes `停止博客预览`; click it again to stop the preview
+service.
 
 ## Cloudflare Pages
 
@@ -82,8 +94,10 @@ CLOUDFLARE_PROJECT_NAME
 
 The Obsidian plugin adds:
 
+- a ribbon button: `启动博客预览` / `停止博客预览`;
 - a ribbon button: `一键提交并推送博客`;
 - a command palette item with the same name;
+- a command palette item: `打开博客站点配置入口`;
 - one edit-history update per changed post at publish time only.
 
 It calls:

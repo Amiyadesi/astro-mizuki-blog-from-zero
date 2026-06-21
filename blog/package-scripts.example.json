@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "sync-content": "node scripts/sync-content.js",
+    "predev": "node scripts/sync-content.js || true",
+    "prebuild": "node scripts/sync-content.js || true",
+    "new-post": "node scripts/new-post.js",
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  }
+}
