@@ -24,6 +24,7 @@ try {
 		"description: Test",
 		"tags: [test]",
 		"category: Test",
+		"essay: true",
 		"---",
 		"",
 		"hello",
@@ -78,8 +79,16 @@ try {
 		"![[Pasted image 20260601203747.png]]",
 		"![[Pasted image 20260601203747.png|320]]",
 		"![[Pasted image 20260601203747.png|A pasted screenshot|640x360]]",
+		"{{spoiler:covered answer|hover hint}}",
+		"{{黑幕:没有提示的文字}}",
+		"",
+		":::photo-grid",
+		"![[Pasted image 20260601203747.png|Left caption]]",
+		"![Right caption](second image.jpg)",
+		":::",
 	].join("\n"));
 	write(path.join(fixtureArticles, "posts", "space-images", "Pasted image 20260601203747.png"), "image");
+	write(path.join(fixtureArticles, "posts", "space-images", "second image.jpg"), "second image");
 	write(path.join(fixtureArticles, "spec", "about.md"), "# About\n");
 	write(path.join(fixtureArticles, "site", "profile.json"), JSON.stringify({
 		avatar: "profile/avatar.webp",
@@ -191,6 +200,22 @@ try {
 	assert.match(
 		read(path.join(fixtureBlog, "src", "content", "posts", "space-images", "index.md")),
 		/<img src="\/images\/posts\/space-images\/Pasted%20image%2020260601203747\.png" alt="A pasted screenshot" width="640" height="360" \/>/,
+	);
+	assert.match(
+		read(path.join(fixtureBlog, "src", "content", "posts", "space-images", "index.md")),
+		/<span class="sayori-spoiler" tabindex="0" data-tooltip="hover hint" aria-label="hover hint">covered answer<\/span>/,
+	);
+	assert.match(
+		read(path.join(fixtureBlog, "src", "content", "posts", "space-images", "index.md")),
+		/<span class="sayori-spoiler" tabindex="0">没有提示的文字<\/span>/,
+	);
+	assert.match(
+		read(path.join(fixtureBlog, "src", "content", "posts", "space-images", "index.md")),
+		/<div class="sayori-photo-grid" style="--photo-grid-columns: 2;">[\s\S]*<img src="\/images\/posts\/space-images\/Pasted%20image%2020260601203747\.png" alt="Left caption" loading="lazy" \/>[\s\S]*<figcaption>Left caption<\/figcaption>[\s\S]*<img src="\/images\/posts\/space-images\/second%20image\.jpg" alt="Right caption" loading="lazy" \/>[\s\S]*<figcaption>Right caption<\/figcaption>[\s\S]*<\/div>/,
+	);
+	assert.match(
+		read(path.join(fixtureBlog, "src", "content", "posts", "hello", "index.md")),
+		/essay: true/,
 	);
 	assert.match(
 		read(path.join(fixtureBlog, "src", "content", "posts", "diary", "2026-06-07", "index.md")),

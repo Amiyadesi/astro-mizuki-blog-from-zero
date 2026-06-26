@@ -196,6 +196,8 @@ function transformMarkdownBody(content, sourcePath, slug) {
 	return transformNonCodeBlocks(content, (segment) => {
 		let result = segment;
 		result = stripObsidianComments(result);
+		result = convertPhotoGrids(result, sourcePath, slug);
+		result = convertSpoilers(result);
 		result = convertObsidianEmbeds(result, sourcePath, slug);
 		result = convertWikiLinks(result, sourcePath);
 		result = normalizeImageLinks(result, slug);
@@ -269,6 +271,121 @@ function stripObsidianComments(content) {
 
 function convertObsidianHighlights(content) {
 	return content.replace(/==([^=\n]+)==/g, (_match, text) => `<mark>${text}</mark>`);
+}
+
+function convertSpoilers(content) {
+	return content.replace(/\{\{(?:spoiler|黑幕)\s*[:：]\s*([^|{}\n]+?)(?:\|([^{}\n]*))?\}\}/g, (_match, rawText, rawTooltip = "") => {
+		const text = String(rawText || "").trim();
+		const tooltip = String(rawTooltip || "").trim();
+		const attrs = [
+			'class="sayori-spoiler"',
+			'tabindex="0"',
+			tooltip ? `data-tooltip="${escapeHtml(tooltip)}"` : "",
+			tooltip ? `aria-label="${escapeHtml(tooltip)}"` : "",
+		].filter(Boolean).join(" ");
+		return `<span ${attrs}>${escapeHtml(text)}</span>`;
+	});
+}
+
+function convertPhotoGrids(content, sourcePath, slug) {
+	return content.replace(/^:::(?:photo-grid|gallery)(?:[ \t]+columns=(\d+))?[ \t]*\r?\n([\s\S]*?)^:::[ \t]*$/gm, (match, rawColumns, body) => {
+		const items = [];
+
+		for (const rawLine of String(body || "").split(/\r?\n/)) {
+			const line = rawLine.trim();
+			if (!line) {
+				continue;
+			}
+
+			const item = parsePhotoGridItem(line, slug);
+			if (item) {
+				items.push(item);
+				continue;
+			}
+
+			warnings.push(`${path.relative(repoRoot, sourcePath)}: photo-grid 中无法解析图片 ${line}`);
+		}
+
+		if (items.length === 0) {
+			return match;
+		}
+
+		const columns = normalizePhotoGridColumns(rawColumns, items.length);
+		const figures = items.map((item) => {
+			const attrs = [
+				`src="${escapeHtml(item.src)}"`,
+				`alt="${escapeHtml(item.altText)}"`,
+				'loading="lazy"',
+				item.width ? `width="${escapeHtml(item.width)}"` : "",
+				item.height ? `height="${escapeHtml(item.height)}"` : "",
+			].filter(Boolean).join(" ");
+			const caption = item.caption
+				? `\n<figcaption>${escapeHtml(item.caption)}</figcaption>`
+				: "";
+			return `<figure class="sayori-photo-grid-item">\n<img ${attrs} />${caption}\n</figure>`;
+		}).join("\n");
+
+		return `<div class="sayori-photo-grid" style="--photo-grid-columns: ${columns};">\n${figures}\n</div>`;
+	});
+}
+
+function parsePhotoGridItem(line, slug) {
+	const obsidianMatch = line.match(/^!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]$/);
+	if (obsidianMatch) {
+		const filename = obsidianMatch[1].trim();
+		const option = obsidianMatch[2] || "";
+		const display = parseObsidianEmbedOption(option, filename);
+		const ext = path.extname(stripUrlSuffix(filename)).toLowerCase();
+
+		if (!IMAGE_EXTS.has(ext)) {
+			return null;
+		}
+
+		return {
+			src: slug
+				? publicPath("images", "posts", slug, filename)
+				: publicPath("images", "posts", filename),
+			altText: display.altText,
+			caption: embedOptionHasCaption(option) ? display.altText : "",
+			width: display.width || "",
+			height: display.height || "",
+		};
+	}
+
+	const markdownMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+	if (markdownMatch) {
+		const altText = markdownMatch[1].trim();
+		const src = normalizeMarkdownImageUrl(markdownMatch[2], slug);
+		if (!src || src.startsWith("#")) {
+			return null;
+		}
+
+		return {
+			src,
+			altText: altText || path.basename(stripUrlSuffix(markdownMatch[2].trim())),
+			caption: altText,
+			width: "",
+			height: "",
+		};
+	}
+
+	return null;
+}
+
+function embedOptionHasCaption(option) {
+	const value = String(option || "").trim();
+	if (!value) {
+		return false;
+	}
+	return !/^(\d+)(?:\s*x\s*(\d+))?$/i.test(value);
+}
+
+function normalizePhotoGridColumns(rawColumns, itemCount) {
+	const parsed = Number.parseInt(String(rawColumns || ""), 10);
+	if (Number.isFinite(parsed) && parsed > 0) {
+		return Math.min(parsed, 4);
+	}
+	return Math.min(Math.max(itemCount, 1), 2);
 }
 
 function convertObsidianEmbeds(content, sourcePath, slug) {
@@ -379,44 +496,56 @@ function convertWikiLinks(content, sourcePath) {
 
 function normalizeImageLinks(content, slug) {
 	return content.replace(/(!\[[^\]]*\]\()([^)]+)(\))/g, (match, start, rawUrl, end) => {
-		const url = rawUrl.trim();
-
-		if (
-			url.startsWith("http://") ||
-			url.startsWith("https://") ||
-			url.startsWith("#") ||
-			url.startsWith("data:")
-		) {
+		const normalizedUrl = normalizeMarkdownImageUrl(rawUrl, slug);
+		if (!normalizedUrl) {
 			return match;
 		}
 
-		if (url.startsWith("/")) {
-			return `${start}${encodeInternalPath(url)}${end}`;
-		}
-
-		const normalized = url.replaceAll("\\", "/").replace(/^\.\//, "");
-
-		// Co-located image: relative path within post folder
-		if (slug && !normalized.includes("/")) {
-			return `${start}${publicPath("images", "posts", slug, normalized)}${end}`;
-		}
-
-		const imagesIndex = normalized.indexOf("images/posts/");
-		if (imagesIndex >= 0) {
-			return `${start}${publicPath("images", "posts", normalized.slice(imagesIndex + "images/posts/".length))}${end}`;
-		}
-
-		if (normalized.startsWith("../images/")) {
-			return `${start}${publicPath("images", normalized.slice("../images/".length))}${end}`;
-		}
-
-		// Relative path with directories — resolve against slug
-		if (slug) {
-			return `${start}${publicPath("images", "posts", slug, normalized)}${end}`;
-		}
-
-		return match;
+		return `${start}${normalizedUrl}${end}`;
 	});
+}
+
+function normalizeMarkdownImageUrl(rawUrl, slug) {
+	const url = String(rawUrl || "").trim();
+
+	if (!url || url.startsWith("#")) {
+		return "";
+	}
+
+	if (
+		url.startsWith("http://") ||
+		url.startsWith("https://") ||
+		url.startsWith("data:")
+	) {
+		return url;
+	}
+
+	if (url.startsWith("/")) {
+		return encodeInternalPath(url);
+	}
+
+	const normalized = url.replaceAll("\\", "/").replace(/^\.\//, "");
+
+	// Co-located image: relative path within post folder
+	if (slug && !normalized.includes("/")) {
+		return publicPath("images", "posts", slug, normalized);
+	}
+
+	const imagesIndex = normalized.indexOf("images/posts/");
+	if (imagesIndex >= 0) {
+		return publicPath("images", "posts", normalized.slice(imagesIndex + "images/posts/".length));
+	}
+
+	if (normalized.startsWith("../images/")) {
+		return publicPath("images", normalized.slice("../images/".length));
+	}
+
+	// Relative path with directories — resolve against slug
+	if (slug) {
+		return publicPath("images", "posts", slug, normalized);
+	}
+
+	return "";
 }
 
 function convertObsidianBlockIds(content) {

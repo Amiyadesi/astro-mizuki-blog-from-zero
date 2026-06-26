@@ -10,6 +10,7 @@ image: ""
 tags: []
 category: ""
 draft: true
+essay: false
 alias: ""
 ---
 

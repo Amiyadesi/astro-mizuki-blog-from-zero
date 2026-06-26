@@ -10,6 +10,7 @@ image: ""
 tags: [Mizuki, Obsidian, Astro]
 category: Notes
 draft: false
+essay: false
 alias: ""
 ---
 

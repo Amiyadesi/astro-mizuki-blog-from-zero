@@ -28,6 +28,44 @@ The starter enables:
 
 Use `articles/templates/blog-post.md` for new posts.
 
+The post template includes:
+
+```yaml
+draft: true
+essay: false
+```
+
+Use `draft: false` when a post is ready to publish. Use `essay: true` for a
+short note that should be collected on the essays page instead of published as
+a standalone post page. If the note later grows into a full article, change
+`essay` back to `false` or remove that line, then sync and build again.
+
+## Writing Syntax
+
+Spoilers can be written inline:
+
+```md
+{{spoiler:covered text|tooltip text}}
+{{黑幕:只遮住正文}}
+```
+
+The optional text after `|` becomes the tooltip. The generated HTML uses
+`.sayori-spoiler`.
+
+Side-by-side photos can be written as a container:
+
+```md
+:::photo-grid
+![[left.png|Left caption]]
+![Right caption](right.png)
+:::
+```
+
+Use `:::photo-grid columns=3` for three columns. Captions come from the
+Obsidian embed alias or Markdown image alt text. The generated HTML uses
+`.sayori-photo-grid` and `.sayori-photo-grid-item`; add matching theme CSS if
+the base blog theme does not include it yet.
+
 ## Preview
 
 From Obsidian, click the preview ribbon icon or run:

@@ -9,6 +9,8 @@ inspired by the official Mizuki content repository, while adding:
 - a local Obsidian plugin for one-click sync, commit, and push;
 - a local Obsidian preview button for starting/stopping the blog preview;
 - a blog post template with edit-history fields;
+- an `essay` frontmatter switch for short notes collected on a dedicated essays page;
+- Obsidian-friendly spoiler blocks and side-by-side photo groups;
 - a content sync script for folder-per-post Markdown and co-located assets;
 - a sample Cloudflare Pages GitHub Actions workflow.
 
@@ -39,6 +41,27 @@ production secrets.
 
 `articles/posts/<slug>/<slug>.md` is the authoring source. Generated Mizuki
 content under `blog/src/content/posts/` should not be edited by hand.
+
+New posts start as drafts. Set `draft: false` when they are ready to publish.
+Set `essay: true` for short notes that should appear on a dedicated essays page
+instead of as standalone post pages. To turn an essay back into a normal post,
+remove `essay: true` or set it to `false`, then sync and build again.
+
+Useful writing syntax:
+
+```md
+{{spoiler:covered text|tooltip text}}
+{{黑幕:只遮住正文}}
+
+:::photo-grid
+![[left.png|Left caption]]
+![Right caption](right.png)
+:::
+```
+
+The sync script emits `.sayori-spoiler`, `.sayori-photo-grid`, and
+`.sayori-photo-grid-item`. Add matching styles in the Mizuki theme so spoilers
+hide until hover/focus and photo groups become side-by-side on wide screens.
 
 ## How To Use
 
