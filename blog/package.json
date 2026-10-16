@@ -1,6 +1,0 @@
-{
-  "type": "module",
-  "scripts": {
-    "sync-content": "node scripts/sync-content.js"
-  }
-}

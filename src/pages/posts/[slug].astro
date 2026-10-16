@@ -1,0 +1,42 @@
+---
+import { render } from "astro:content";
+import type { GetStaticPaths, InferGetStaticPropsType } from "astro";
+import Base from "../../layouts/Base.astro";
+import { publishedPosts, dateText } from "../../posts";
+import { site } from "../../site.mjs";
+export const getStaticPaths = (async () => {
+  const posts = await publishedPosts();
+  return posts.map((post, index) => ({ params: { slug: post.id }, props: { post, newer: posts[index - 1], older: posts[index + 1] } }));
+}) satisfies GetStaticPaths;
+type Props = InferGetStaticPropsType<typeof getStaticPaths>;
+const { post, older, newer } = Astro.props;
+const { Content, headings } = await render(post);
+const toc = headings.filter(heading => heading.depth === 2 || heading.depth === 3);
+const structured = {
+  "@context": "https://schema.org", "@type": "BlogPosting",
+  headline: post.data.title, description: post.data.description,
+  datePublished: dateText(post.data.published), dateModified: dateText(post.data.updated || post.data.published),
+  author: { "@type": "Person", name: site.author, url: new URL("/about/", site.url).href },
+  mainEntityOfPage: new URL(`/posts/${post.id}/`, site.url).href,
+};
+---
+<Base title={post.data.title} description={post.data.description} article>
+  <script type="application/ld+json" set:html={JSON.stringify(structured).replace(/</g, "\\u003c")} />
+  <div class="reading-layout">
+    {toc.length > 0 && <aside class="toc" data-pagefind-ignore><details id="toc"><summary>文章目录</summary><nav aria-label="文章目录"><ol>{toc.map(heading => <li class:list={[{ sub: heading.depth === 3 }]}><a href={`#${heading.slug}`}>{heading.text}</a></li>)}</ol></nav></details></aside>}
+    <article data-pagefind-body>
+      <header class="page-heading">
+        <p class="meta"><time datetime={dateText(post.data.published)}>{dateText(post.data.published)}</time>{post.data.category && <span>{post.data.category}</span>}</p>
+        <h1 data-pagefind-meta="title">{post.data.title}</h1>
+        {post.data.description && <p class="dek">{post.data.description}</p>}
+        {post.data.updated && <p class="meta">更新于 <time datetime={dateText(post.data.updated)}>{dateText(post.data.updated)}</time></p>}
+      </header>
+      <div class="prose"><Content /></div>
+      {post.data.tags.length > 0 && <p class="tags" data-pagefind-ignore>{post.data.tags.map(tag => <span>#{tag}</span>)}</p>}
+      <nav class="post-navigation" aria-label="前后文章" data-pagefind-ignore>
+        {newer ? <a href={`/posts/${newer.id}/`}>较新一篇<br />{newer.data.title}</a> : <span />}
+        {older ? <a href={`/posts/${older.id}/`}>较早一篇<br />{older.data.title}</a> : <span />}
+      </nav>
+    </article>
+  </div>
+</Base>

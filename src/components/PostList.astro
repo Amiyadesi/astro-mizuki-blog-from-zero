@@ -1,0 +1,13 @@
+---
+import type { CollectionEntry } from "astro:content";
+import { dateText } from "../posts";
+interface Props { posts: CollectionEntry<"posts">[]; }
+const { posts } = Astro.props;
+---
+<ol class="post-list">
+  {posts.map(post => <li>
+    <h2><a href={`/posts/${post.id}/`}>{post.data.title}</a></h2>
+    <p class="meta"><time datetime={dateText(post.data.published)}>{dateText(post.data.published)}</time>{post.data.category && <span>{post.data.category}</span>}</p>
+    {post.data.description && <p class="excerpt">{post.data.description}</p>}
+  </li>)}
+</ol>

@@ -1,0 +1,12 @@
+---
+import { getCollection, render } from "astro:content";
+import type { GetStaticPaths, InferGetStaticPropsType } from "astro";
+import Base from "../layouts/Base.astro";
+export const getStaticPaths = (async () => (await getCollection("pages")).map(page => ({ params: { page: page.id }, props: { page } }))) satisfies GetStaticPaths;
+type Props = InferGetStaticPropsType<typeof getStaticPaths>;
+const { page } = Astro.props;
+const { Content } = await render(page);
+---
+<Base title={page.data.title} description={page.data.description}>
+  <article class="standalone"><header class="page-heading"><h1>{page.data.title}</h1></header><div class="prose"><Content /></div></article>
+</Base>

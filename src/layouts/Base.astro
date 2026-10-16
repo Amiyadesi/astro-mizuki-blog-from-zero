@@ -1,0 +1,71 @@
+---
+import { site } from "../site.mjs";
+import "../styles/global.css";
+interface Props { title?: string; description?: string; article?: boolean; }
+const { title, description = site.description, article = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, site.url);
+const isPreview = process.env.CF_PAGES_BRANCH && process.env.CF_PAGES_BRANCH !== "main";
+---
+<!doctype html>
+<html lang={site.lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title ? `${title} | ${site.title}` : site.title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#faf8f2" />
+    <link rel="canonical" href={canonical} />
+    {isPreview && <meta name="robots" content="noindex, nofollow" />}
+    <meta property="og:type" content={article ? "article" : "website"} />
+    <meta property="og:title" content={title || site.title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content={site.title} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate" type="application/rss+xml" title={site.title} href="/rss.xml" />
+    <script is:inline>
+      try {
+        const theme = localStorage.getItem("theme");
+        document.documentElement.dataset.theme = theme === "light" || theme === "dark" ? theme : "system";
+      } catch { /* Storage may be disabled; CSS follows the system theme. */ }
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到内容</a>
+    <header class="site-header" data-pagefind-ignore>
+      <nav class="nav shell" aria-label="主导航">
+        <a class="brand" href="/">{site.title}<span aria-hidden="true">.</span></a>
+        <div class="nav-actions">
+          <button id="search-open" type="button" aria-haspopup="dialog">搜索</button>
+          <details id="menu">
+            <summary>菜单</summary>
+            <div class="menu-links">
+              <a href="/">文章</a><a href="/archive/">归档</a><a href="/about/">关于</a><a href="/friends/">友链</a>
+              <a href="/rss.xml">RSS</a>
+              <button id="theme" type="button">主题：跟随系统</button>
+            </div>
+          </details>
+        </div>
+        <div class="desktop-links"><a href="/">文章</a><a href="/archive/">归档</a><a href="/about/">关于</a><a href="/friends/">友链</a></div>
+      </nav>
+    </header>
+    <main id="main" class="shell" tabindex="-1"><slot /></main>
+    <footer class="site-footer shell" data-pagefind-ignore>
+      <span>© {new Date().getUTCFullYear()} {site.author}</span>
+      <span><a href="/rss.xml">RSS</a> <a href="https://github.com/Amiyadesi/astro-mizuki-blog-from-zero">Sayori Lite</a></span>
+    </footer>
+    <dialog id="search-dialog" aria-labelledby="search-heading">
+      <div class="dialog-header"><h2 id="search-heading">搜索文章</h2><form method="dialog"><button aria-label="关闭搜索">关闭</button></form></div>
+      <label for="search-input">关键词</label>
+      <input id="search-input" type="search" autocomplete="off" placeholder="输入想找的内容" />
+      <p id="search-status" role="status" aria-live="polite">输入关键词开始搜索。</p>
+      <button id="search-retry" type="button" hidden>重试</button>
+      <ol id="search-results"></ol>
+    </dialog>
+    <dialog id="image-dialog" aria-label="放大图片">
+      <form method="dialog"><button aria-label="关闭图片">关闭</button></form><img alt="" />
+    </dialog>
+    <script src="../scripts/ui.ts"></script>
+    <script src="../scripts/search.ts"></script>
+  </body>
+</html>

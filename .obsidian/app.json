@@ -1,0 +1,8 @@
+{
+  "attachmentFolderPath": "./",
+  "newFileLocation": "folder",
+  "newFileFolderPath": "articles/posts",
+  "useMarkdownLinks": true,
+  "showUnsupportedFiles": false,
+  "alwaysUpdateLinks": true
+}

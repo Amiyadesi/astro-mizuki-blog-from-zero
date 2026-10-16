@@ -1,9 +1,14 @@
 ---
-title: About
-description: About this blog
+title: 关于
+description: 关于这张书桌和坐在这里的人。
 ---
 
-# About
+你好，欢迎来到我的书桌。
 
-This is an example special page. Edit this file from Obsidian, then run the
-sync script to copy it into your Mizuki content collection.
+这里用来写日常、记录学习，也留下一些想认真说的话。
+
+把这几段换成你自己的介绍就好。站点名字、头像和简介在仓库根目录的 `site.config.mjs` 修改。
+
+## 找到我
+
+把你的公开联系方式放在这里，也可以看看[我的朋友们](/friends/)。

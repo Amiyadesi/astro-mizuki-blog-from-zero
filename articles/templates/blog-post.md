@@ -1,17 +1,11 @@
 ---
-title: "{{title}}"
+title: "在这里写文章标题"
+description: "用一两句话介绍这篇文章"
 published: {{date:YYYY-MM-DD}}
-created: {{date:YYYY-MM-DD}}
 updated: {{date:YYYY-MM-DD}}
-lastEdited: {{date:YYYY-MM-DD}}
-updateCount: 0
-description: ""
-image: ""
-tags: []
-category: ""
 draft: true
-essay: false
-alias: ""
+category: "日常"
+tags: []
 ---
 
-# {{title}}
+从这里开始写正文。标题由页面自动显示，不需要重复写一级标题。

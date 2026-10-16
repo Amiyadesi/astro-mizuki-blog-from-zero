@@ -1,0 +1,26 @@
+---
+import type { GetStaticPaths, Page } from "astro";
+import type { CollectionEntry } from "astro:content";
+import Base from "../layouts/Base.astro";
+import PostList from "../components/PostList.astro";
+import { publishedPosts } from "../posts";
+import { site } from "../site.mjs";
+export const getStaticPaths = (async ({ paginate }) => paginate(await publishedPosts(), { pageSize: 10 })) satisfies GetStaticPaths;
+interface Props { page: Page<CollectionEntry<"posts">>; }
+const { page } = Astro.props;
+---
+<Base title={page.currentPage > 1 ? `文章 · 第 ${page.currentPage} 页` : undefined}>
+  {page.currentPage === 1 && <section class="intro" aria-labelledby="intro-title">
+    <img src={site.avatar} width="72" height="72" alt={`${site.author}的头像`} />
+    <div><h1 id="intro-title">{site.author}的书桌</h1><p>{site.description}</p></div>
+    <aside class="note">{site.note}</aside>
+  </section>}
+  <div class="section-heading"><h2>{page.currentPage === 1 ? "最近写下的" : `文章 · 第 ${page.currentPage} 页`}</h2><a href="/archive/">全部文章</a></div>
+  <PostList posts={page.data} />
+  {page.total === 0 && <p>这里还没有公开文章。</p>}
+  {(page.url.prev || page.url.next) && <nav class="pagination" aria-label="文章分页">
+    {page.url.prev ? <a rel="prev" href={page.url.prev}>上一页</a> : <span />}
+    <span>{page.currentPage} / {page.lastPage}</span>
+    {page.url.next ? <a rel="next" href={page.url.next}>下一页</a> : <span />}
+  </nav>}
+</Base>

@@ -1,0 +1,11 @@
+---
+import Base from "../layouts/Base.astro";
+import PostList from "../components/PostList.astro";
+import { publishedPosts } from "../posts";
+const posts = await publishedPosts();
+const years = [...new Set(posts.map(post => post.data.published.getUTCFullYear()))];
+---
+<Base title="归档">
+  <header class="page-heading"><h1>归档</h1><p class="meta">共 {posts.length} 篇文章。</p></header>
+  {years.map(year => <section aria-label={`${year} 年文章`}><h2 class="year">{year}</h2><PostList posts={posts.filter(post => post.data.published.getUTCFullYear() === year)} /></section>)}
+</Base>

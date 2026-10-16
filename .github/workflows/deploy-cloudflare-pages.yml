@@ -1,107 +1,72 @@
-name: Deploy Cloudflare Pages
+name: Check and optionally deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
   workflow_dispatch:
-
-concurrency:
-  group: cloudflare-pages-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  deploy:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_PROJECT_NAME: ${{ secrets.CLOUDFLARE_PROJECT_NAME }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://example.pages.dev' }}
+      CF_PAGES_BRANCH: ${{ github.event_name == 'pull_request' && 'preview' || 'main' }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm run check
+      - run: pnpm run build
+      - run: pnpm run verify-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist
+          retention-days: 3
 
-      - name: Check Cloudflare secrets
-        shell: bash
-        run: |
-          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN CLOUDFLARE_PROJECT_NAME; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::Missing GitHub Actions secret: ${name}"
-              exit 1
-            fi
-          done
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.CF_PAGES_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PROJECT_NAME: ${{ vars.CLOUDFLARE_PROJECT_NAME }}
+      SITE_URL: ${{ vars.SITE_URL }}
+    steps:
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
-
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@latest --activate
-
-      - name: Ensure Cloudflare Pages project
+      - name: Require deployment configuration
         shell: bash
         run: |
           set -euo pipefail
-
-          api_base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects"
-          project_url="${api_base}/${CLOUDFLARE_PROJECT_NAME}"
-          response_file="$(mktemp)"
-
-          status="$(
-            curl --silent --show-error --output "${response_file}" --write-out "%{http_code}" \
-              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              "${project_url}"
-          )"
-
-          if [[ "${status}" == "200" ]]; then
-            echo "Cloudflare Pages project already exists: ${CLOUDFLARE_PROJECT_NAME}"
-            exit 0
-          fi
-
-          if [[ "${status}" != "404" ]]; then
-            cat "${response_file}"
-            echo "::error::Failed to check Cloudflare Pages project. HTTP status: ${status}"
-            exit 1
-          fi
-
-          request_body="$(mktemp)"
-          node -e 'process.stdout.write(JSON.stringify({ name: process.env.CLOUDFLARE_PROJECT_NAME, production_branch: "main" }))' > "${request_body}"
-
-          status="$(
-            curl --silent --show-error --output "${response_file}" --write-out "%{http_code}" \
-              --request POST \
-              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              --header "Content-Type: application/json" \
-              --data @"${request_body}" \
-              "${api_base}"
-          )"
-
-          if [[ "${status}" == "200" || "${status}" == "201" ]]; then
-            echo "Created Cloudflare Pages project: ${CLOUDFLARE_PROJECT_NAME}"
-            exit 0
-          fi
-
-          cat "${response_file}"
-          echo "::error::Failed to create Cloudflare Pages project. HTTP status: ${status}"
-          exit 1
-
-      - name: Build blog
-        working-directory: blog
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm run build
-
-      - name: Deploy
-        working-directory: blog
-        run: >
-          npx --yes wrangler@latest pages deploy dist
-          --project-name "${CLOUDFLARE_PROJECT_NAME}"
-          --branch main
-          --commit-message "Deploy blog from GitHub Actions"
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_PROJECT_NAME SITE_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Set ${name} in repository secrets or variables as documented in README."
+              exit 1
+            fi
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: dist
+      - name: Deploy the verified artifact to an existing Pages project
+        run: npx --yes wrangler@4.111.0 pages deploy dist --project-name "$CLOUDFLARE_PROJECT_NAME" --branch main --commit-hash "$GITHUB_SHA"
