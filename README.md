@@ -29,6 +29,8 @@ Pages 会识别锁文件并安装依赖。若构建环境没有正确启用 pnpm
 
 `SITE_URL` 用于 canonical、RSS 和 sitemap。未配置时，Pages 使用构建环境的 `CF_PAGES_URL`，本地使用 `http://localhost:4321`；正式上线请设置固定生产地址，避免预览域名进入索引。非 `main` 的 Pages 构建输出 `noindex` 与禁止抓取的 robots。
 
+本地可以复制 `.env.example` 为 `.env` 后填写地址；构建环境已有的变量优先。`.env` 不会提交到 Git。
+
 ## 写一篇文章
 
 只用 GitHub 网页编辑也可以，不要求安装 Obsidian、Node 或 Git。
